@@ -1,0 +1,17 @@
+# dsh-plugin-marketplace bundle patch: the plugin marketplace surface.
+# Applied after the web profile's own bundle layers, so this row adds the
+# marketplace host half (lib/index.js — the /marketplace HTTP routes and the
+# `dsh plugin` forwarder) to the Loader, and the client-modules scanner then
+# picks up its `dsh.client` declaration to serve /plugins/<id>/client.js as
+# the browser half (the settings → plugins → marketplace tab).
+#
+# `inject` names the services this plugin's host half depends on:
+#   webServer   → ctx.webServer.register('/marketplace', ...)
+#   subprocess  → ctx.subprocess.spawn(...) to shell out to `dsh plugin` / curl
+# These are provided by the web profile's existing bundles
+# (@deepseek-ai/dsh-host-webserver, @deepseek-ai/dsh-subprocess).
+
+- insert:
+    - id: plugin-marketplace
+      name: dsh-plugin-marketplace
+      inject: [webServer, subprocess]

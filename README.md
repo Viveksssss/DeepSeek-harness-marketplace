@@ -10,7 +10,7 @@
 [![DSH](https://img.shields.io/badge/DSH-0.1.0--rc.6-4D6BFE?style=flat-square&logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PHBhdGggZmlsbD0iI2ZmZiIgZD0iTTEyIDJDNi40OCAyIDIgNi40OCAyIDEyczQuNDggMTAgMTAgMTAgMTAtNC40OCAxMC0xMFMxNy41MiAyIDEyIDJ6bTAgMThjLTQuNDEgMC04LTMuNTktOC04czMuNTktOCA4LTggOCAzLjU5IDggOC0zLjU5IDgtOCA4eiIvPjwvc3ZnPg==)](https://github.com/deepseek-ai/deepseek-harness)
 [![License](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](./LICENSE)
 [![Platform](https://img.shields.io/badge/platform-web-8a63d2?style=flat-square)](#)
-[![GitHub stars](https://img.shields.io/github/stars/your-name/dsh-plugin-marketplace?style=flat-square)](https://github.com/your-name/dsh-plugin-marketplace)
+[![GitHub stars](https://img.shields.io/github/stars/Viveksssss/DeepSeek-harness-marketplace?style=flat-square)](https://github.com/Viveksssss/DeepSeek-harness-marketplace)
 
 </div>
 
@@ -106,8 +106,6 @@
 ```bash
 dsh plugin --profile web add github:Viveksssss/DeepSeek-harness-marketplace
 ```
-
-> 如果 `@your-name` 是你真实的 GitHub 用户名，替换成你自己的仓库路径即可。
 
 然后用 `dsh web` 启动：
 
@@ -214,28 +212,65 @@ dsh plugin --profile web update
 
 ## 🧩 插件识别规则
 
-一个 GitHub 仓库要能作为 DSH 插件被本市场（以及 `dsh plugin`）正确安装，需要满足：
+一个 GitHub 仓库要能作为 DSH 插件被本市场（以及 `dsh plugin`）正确安装，需要同时具备**两个**条件：
 
-1. 仓库根目录有合法的 **`package.json`**；
-2. `package.json` 中声明了 DSH 的 bundle 或 client 注入字段，例如：
+### 1. 声明 `dsh.bundle`（作为 profile bundle 层被加载）
+
+`package.json` 里声明 `dsh.bundle.patch`，指向仓库根目录的 `cordis.patch.yml`：
 
 ```jsonc
 {
-  "name": "my-dsh-plugin",
+  "name": "dsh-plugin-marketplace",
   "dsh": {
-    // client（web 端）插件
-    "client": {
-      "inject": ["@deepseek-ai/dsh-client-runtime"],
-      "platform": "web"
+    // 关键：声明自己是 bundle，reconcilePlugins 会据此把它加进 dsh.profile.bundles
+    "bundle": {
+      "patch": "./cordis.patch.yml"
     }
-    // 或者作为 bundle 层：
-    // "bundle": { "patch": {} }
   }
 }
 ```
 
-3. **入口文件必需真实存在**。这是最常见的坑——很多 git 仓库不提交 `lib/` 构建产物，
-   安装时又没跑 `prepare`/`build`，导致装上后却无法启动。
+仓库根目录同时需要一个 **`cordis.patch.yml`**，把自己 insert 进 Loader 的 entries
+（`name` 必须是 `package.json` 的包名；`id` 全局唯一）：
+
+```yaml
+- insert:
+    - id: plugin-marketplace
+      name: dsh-plugin-marketplace
+      inject: [webServer, subprocess]   # 仅当 host 半需要这些服务时才写
+```
+
+> ⚠️ **没有 `dsh.bundle` 声明**，`dsh plugin add` 会把它当普通依赖安装（不加入 bundle 层），
+> 并打印 `declares no dsh.bundle` 警告；**没有 `cordis.patch.yml` 里的 entry**，则不会被
+> Loader 加载。两者缺一不可。
+
+### 2. 声明 `dsh.client`（作为浏览器插件被扫描）
+
+如果插件有前端 UI，再声明 `dsh.client`：
+
+```jsonc
+{
+  "dsh": {
+    "bundle": { "patch": "./cordis.patch.yml" },
+    "client": {
+      "inject": ["@deepseek-ai/dsh-client-runtime"],
+      "platform": "web"
+    }
+  },
+  "exports": {
+    ".": "./lib/index.js",      // host 半（后端，提供 /marketplace 路由）
+    "./client": "./lib/client.js" // browser 半（前端，slot 注入 UI）
+  }
+}
+```
+
+> `client-modules` 扫描 `ctx.loader.entries()`，对每个包读 `dsh.client`，校验
+> `platform === "web"` 且存在 `exports["./client"]`，然后 serve `/plugins/<id>/client.js`。
+
+### 3. 入口文件必需真实存在
+
+这是最常见的坑——很多 git 仓库不提交 `lib/` 构建产物，安装时又没跑 `prepare`/`build`，
+导致装上后却无法启动。
    - ✅ 方案 A：把构建产物提交进 git；
    - ✅ 方案 B：把 `build` 脚本改成（或加上）`prepare`，因为 pnpm 安装 git 依赖时会执行 `prepare`。
 
@@ -342,10 +377,12 @@ dsh plugin --profile web add link:$(pwd)
 
 ```
 .
-├── package.json     # 包清单，含 dsh.client 注入声明
+├── package.json      # 包清单：dsh.bundle（bundle 层）+ dsh.client（浏览器插件）声明
+├── cordis.patch.yml  # bundle 补丁：把自己 insert 进 Loader entries
+├── LICENSE           # MIT
 └── lib
-    ├── index.js     # 后端：/marketplace HTTP 路由 + dsh plugin 调用 + 校验/回滚
-    └── client.js    # 前端：设置页 UI（React + DSW 设计令牌）
+    ├── index.js      # host 半：/marketplace HTTP 路由 + dsh plugin 调用 + 校验/回滚
+    └── client.js     # browser 半：设置页 UI（React + DSW 设计令牌）
 ```
 
 ---
